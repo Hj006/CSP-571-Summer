@@ -1,0 +1,82 @@
+---
+title: "diabetes_prediction_dataset"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+author: ""
+date: "`r Sys.Date()`"
+---
+
+## Feature Description
+
+### `gender`: Biological Sex  
+- **male**: 41%  
+- **female**: 59%  
+- **other**: 0%  
+
+Gender may influence an individual's susceptibility to diabetes.
+
+---
+
+### `age`: Age  
+Age is an important risk factor for diabetes — generally, older individuals have a higher likelihood of developing it.  
+The age range in this dataset is **0 to 80 years**.
+
+---
+
+### `hypertension`: Presence of Hypertension  
+- `0`: No hypertension  
+- `1`: Has hypertension  
+
+Hypertension is a known comorbidity and risk factor for diabetes.
+
+---
+
+### `heart_disease`: Presence of Heart Disease  
+- `0`: No heart disease  
+- `1`: Has heart disease  
+
+Heart disease is strongly associated with increased diabetes risk.
+
+---
+
+### `smoking_history`: Smoking Behavior  
+Smoking is a risk factor for diabetes and can worsen its complications. Categories include:
+
+- `not current`: Previously smoked but not currently  
+- `former`: Former smoker, now quit  
+- `No Info`: No information available  
+- `current`: Currently smoking  
+- `never`: Never smoked  
+- `ever`: Smoked at some point in the past
+
+---
+
+### `bmi`: Body Mass Index  
+BMI is calculated from height and weight to assess body fat. Range: **10.16 to 71.55**
+
+- BMI < 18.5: Underweight  
+- 18.5 ≤ BMI < 24.9: Normal  
+- 25 ≤ BMI < 29.9: Overweight  
+- BMI ≥ 30: Obese
+
+---
+
+### `HbA1c_level`: Hemoglobin A1c  
+HbA1c reflects average blood glucose levels over the past **2–3 months**.  
+Levels above **6.5%** typically indicate diabetes risk.
+
+---
+
+### `blood_glucose_level`: Blood Glucose Level  
+This refers to the concentration of glucose in the blood at a specific time.  
+Higher glucose levels are a key indicator of diabetes.
+
+---
+
+### `diabetes`: Target Variable (Diabetes Status)  
+- `0`: Does not have diabetes  
+- `1`: Has diabetes
+
+Objective1:
+Find out which features (such as age, bmi, gender, etc.) may have a significant statistical or pattern relationship with diabetes (values of 0 or 1)
