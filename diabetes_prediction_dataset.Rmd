@@ -80,3 +80,229 @@ Higher glucose levels are a key indicator of diabetes.
 
 Objective1:
 Find out which features (such as age, bmi, gender, etc.) may have a significant statistical or pattern relationship with diabetes (values of 0 or 1)
+
+---
+
+Read the Diabetes prediction dataset and view the first five rows of the diabetes_prediction_dataset:
+
+
+```{r chunk1}
+diabetes_dataset = read.csv("./diabetes_prediction_dataset.csv")
+head(diabetes_dataset, 5)
+```
+```{r chunk1.1}
+# Check column names and whether they need to be renamed
+colnames(diabetes_dataset)
+
+# Replace spaces (if any)
+# colnames(diabetes_dataset) <- gsub(" ", "_", colnames(diabetes_dataset))
+```
+Check if there are exact duplicate rows???
+This dataset does not contain unique identifiers, so we do not check for duplicate rows, since each duplicate row is a failed entry.
+
+
+
+
+View dataset information
+```{r chunk2}
+str(diabetes_dataset)
+summary(diabetes_dataset)
+```
+
+
+
+
+Check the values of gender and smoking_history. Determine whether to convert to dummy variables (dummy/one-hot) or label encoding.
+```{r chunk2.1}
+# View all unique values for gender and smoking_history
+unique(diabetes_dataset$gender)
+unique(diabetes_dataset$smoking_history)
+
+# View frequency distribution in detail
+table(diabetes_dataset$gender)
+table(diabetes_dataset$smoking_history)
+```
+
+
+Check if there are missing values in the dataset
+```{r chunk3}
+anyNA(diabetes_dataset)         # any missing values
+colSums(is.na(diabetes_dataset))  # num of missing values in each column
+```
+This data set does not have missing values, so there is no need to fill missing values
+
+
+```{r chunk2.2}
+# convert gender to factor
+diabetes_dataset$gender <- factor(diabetes_dataset$gender)
+
+# dummy variables
+gender_dummies <- model.matrix(~ gender - 1, data = diabetes_dataset)
+
+# add it back
+diabetes_dataset <- cbind(diabetes_dataset, gender_dummies)
+head(diabetes_dataset, 5)
+```
+```{r chunk2.3}
+library(dplyr)
+
+# Merge smoking_history categories into more logical groups
+diabetes_dataset$smoking_status_grouped <- dplyr::case_when(
+  diabetes_dataset$smoking_history == "never" ~ "never",
+  diabetes_dataset$smoking_history == "current" ~ "current",
+  diabetes_dataset$smoking_history %in% c("former", "not current", "ever") ~ "former",
+  TRUE ~ "unknown"
+)
+
+# convert gender to factor
+diabetes_dataset$smoking_status_grouped <- factor(diabetes_dataset$smoking_status_grouped)
+
+# one-hot encoding
+smoking_dummies <- model.matrix(~ smoking_status_grouped - 1, data = diabetes_dataset)
+
+# add it back
+diabetes_dataset <- cbind(diabetes_dataset, smoking_dummies)
+head(diabetes_dataset, 5)
+```
+
+
+Data Cleaning and Outlier Handling
+```{r chunk4}
+# Select continuous variables
+num_vars <- c("age", "bmi", "HbA1c_level", "blood_glucose_level")
+
+# 2 x 2 
+par(mfrow = c(2, 2))  
+
+# boxplot
+boxplot(diabetes_dataset$age, 
+        main = "Boxplot of Age", 
+        col = "lightblue", outline = TRUE)
+
+boxplot(diabetes_dataset$bmi, 
+        main = "Boxplot of BMI", 
+        col = "lightblue", outline = TRUE)
+
+boxplot(diabetes_dataset$HbA1c_level, 
+        main = "Boxplot of HbA1c", 
+        col = "lightblue", outline = TRUE)
+
+boxplot(diabetes_dataset$blood_glucose_level, 
+        main = "Boxplot of Glucose", 
+        col = "lightblue", outline = TRUE)
+
+par(mfrow = c(1, 1))
+
+
+```
+BMI has a large number of outliers, which should be retained or binned.
+Blood Glucose Level has an upper bound outlier, but it is likely a true anomaly
+HbA1c_level has a few outliers, but not too much
+Age distribution is natural, no processing required
+
+```{r chunk5}
+# Distribution of age and BMI,HbA1c,Glucose
+library(ggplot2)
+ggplot(diabetes_dataset, aes(x = age, fill = as.factor(diabetes))) + 
+  geom_histogram(binwidth = 5, position = "dodge") +
+  labs(title = "Age Distribution by Diabetes Status", fill = "Diabetes")
+
+
+
+```
+```{r chunk5.1}
+ggplot(diabetes_dataset, aes(x = 1:nrow(diabetes_dataset), y = bmi, color = as.factor(diabetes))) +
+  geom_point(alpha = 0.4, size = 1) +
+  labs(title = "BMI Distribution by Diabetes Status",
+       x = "Index", y = "BMI", color = "Diabetes") +
+  theme_minimal()
+```
+```{r chunk5.2}
+ggplot(diabetes_dataset, aes(x = 1:nrow(diabetes_dataset), y = HbA1c_level, color = as.factor(diabetes))) +
+  geom_point(alpha = 0.4, size = 1) +
+  labs(title = "HbA1c Level by Diabetes Status",
+       x = "Index", y = "HbA1c Level", color = "Diabetes") +
+  theme_minimal()
+```
+```{r chunk5.3}
+ggplot(diabetes_dataset, aes(x = 1:nrow(diabetes_dataset), y = blood_glucose_level, color = as.factor(diabetes))) +
+  geom_point(alpha = 0.4, size = 1) +
+  labs(title = "Blood Glucose Level by Diabetes Status",
+       x = "Index", y = "Glucose Level", color = "Diabetes") +
+  theme_minimal()
+```
+```{r chunk5.4}
+ggplot(diabetes_dataset, aes(x = as.factor(hypertension), fill = as.factor(diabetes))) +
+  geom_bar(position = "fill") +
+  labs(title = "Diabetes Proportion by Hypertension",
+       x = "Hypertension (0 = No, 1 = Yes)", y = "Proportion", fill = "Diabetes") +
+  theme_minimal()
+```
+
+a Class Imbalance
+- Observation from all plots: The number of diabetes-positive cases (diabetes = 1) is significantly lower than diabetes-negative cases.
+- The dataset shows a strong class imbalance, roughly 1 diabetic case for every 10 non-diabetic cases.
+
+b Age Distribution by Diabetes Status：
+
+Most diabetes cases are concentrated in the 40+ age group. The number of diabetes cases increases steadily from age 40 to 60. This suggests that middle-aged and older adults have a significantly higher risk of diabetes.
+
+c BMI Distribution by Diabetes Status：
+
+Higher BMI is associated with more diabetes cases. There is a clear concentration of diabetic individuals in higher BMI ranges. Indicates that BMI is a strong risk factor for diabetes.
+
+d HbA1c Level by Diabetes Status：
+
+Individuals with HbA1c ≤ 5.0 are almost exclusively non-diabetic. The 6.0–6.5 range shows mixed cases, with relatively fewer diabetics. HbA1c ≥ 7.0 is almost entirely associated with diabetes.
+
+This aligns well with clinical guidelines (HbA1c ≥ 6.5% indicates diabetes). bA1c is a highly predictive variable.
+
+e Blood Glucose Level by Diabetes Status：
+
+Glucose ≤ 125: almost no diabetic cases. Glucose 125–200: mixed, but majority are non-diabetic. Glucose ≥ 200: nearly all are diabetic cases.
+
+This supports medical criteria that blood glucose over 200 mg/dL is a strong indicator of diabetes.
+
+f Diabetes Proportion by Hypertension：
+
+Diabetic proportion is much higher among individuals with hypertension. While only ~10% of non-hypertensive individuals have diabetes, over 25% of hypertensive individuals are diabetic.
+
+Suggests a significant association or comorbidity between hypertension and diabetes.
+
+
+
+
+
+
+```{r chunk6}
+# Correlation Matrix Heatmap (numeric variables only)
+library(corrplot)
+corr_matrix <- cor(diabetes_dataset[, num_vars])
+corrplot(corr_matrix, method = "color", type = "upper", tl.cex = 0.7)
+
+```
+Feature Transformation and Scaling
+```{r chunk7}
+# Standardize numerical variables
+# diabetes_dataset[num_vars] <- scale(diabetes_dataset[num_vars])
+
+```
+
+```{r chunk7}
+# how gender affects diabetes
+ggplot(diabetes_dataset, aes(x = gender, fill = as.factor(diabetes))) +
+  geom_bar(position = "fill") +
+  labs(title = "Diabetes Proportion by Gender", y = "Proportion")
+
+# BMI vs Age by diabetes status
+ggplot(diabetes_dataset, aes(x = bmi, y = age, color = as.factor(diabetes))) +
+  geom_point(alpha = 0.5) +
+  labs(title = "BMI vs Age by Diabetes", color = "Diabetes")
+
+# ttset
+t.test(age ~ diabetes, data = diabetes_dataset)
+
+# chisquare
+table_gender <- table(diabetes_dataset$gender, diabetes_dataset$diabetes)
+chisq.test(table_gender)
+```
