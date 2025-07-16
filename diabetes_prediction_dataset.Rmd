@@ -281,8 +281,18 @@ corr_matrix <- cor(diabetes_dataset[, num_vars])
 corrplot(corr_matrix, method = "color", type = "upper", tl.cex = 0.7)
 
 ```
+Age and BMI have a weak to moderate positive correlation
+
+Among other variables:
+
+HbA1c_level and blood_glucose_level should be positively correlated in theory, but this data set has almost no linear correlation
+
+Age is basically uncorrelated with HbA1c_level, blood_glucose_level, etc.
+
+
+
 Feature Transformation and Scaling
-```{r chunk7}
+```{r chunk7.0}
 # Standardize numerical variables
 # diabetes_dataset[num_vars] <- scale(diabetes_dataset[num_vars])
 
@@ -294,11 +304,23 @@ ggplot(diabetes_dataset, aes(x = gender, fill = as.factor(diabetes))) +
   geom_bar(position = "fill") +
   labs(title = "Diabetes Proportion by Gender", y = "Proportion")
 
+```
+
+There is little difference in the prevalence of diabetes between females and males, but the prevalence of diabetes in males is slightly higher. Others cannot reflect much information due to too little data.
+
+
+```{r chunk8}
 # BMI vs Age by diabetes status
 ggplot(diabetes_dataset, aes(x = bmi, y = age, color = as.factor(diabetes))) +
   geom_point(alpha = 0.5) +
   labs(title = "BMI vs Age by Diabetes", color = "Diabetes")
+```
 
+People with diabetes are mainly concentrated in the middle-aged and elderly (over 40 years old) + high BMI area
+
+When age and BMI increase together, there are more diabetic patients
+
+```{r chunk9}
 # ttset
 t.test(age ~ diabetes, data = diabetes_dataset)
 
@@ -306,3 +328,242 @@ t.test(age ~ diabetes, data = diabetes_dataset)
 table_gender <- table(diabetes_dataset$gender, diabetes_dataset$diabetes)
 chisq.test(table_gender)
 ```
+
+
+There is a significant difference in age between the diabetes group (diabetes == 1) and the non-diabetes group (diabetes == 0)
+The average age of patients with diabetes is about 20 years older than that of non-diabetes patients
+There is a statistical association between gender and diabetes (may be affected by the other category and lead to inaccuracy)
+
+```{r chunk10}
+library(caret)
+library(glmnet)
+library(ggplot2)
+library(dplyr)
+library(e1071)
+library(pROC)
+
+
+# Remove original gender and smoking_history columns
+cleaned_data <- diabetes_dataset %>%
+  select(-gender, -smoking_history)
+
+# Ensure target is a factor
+cleaned_data$diabetes <- as.factor(cleaned_data$diabetes)
+```
+
+```{r chunk11}
+# Split Data (70% Training, 30% Testing)
+set.seed(42)
+train_index <- createDataPartition(cleaned_data$diabetes, p = 0.7, list = FALSE)
+train_data <- cleaned_data[train_index, ]
+test_data  <- cleaned_data[-train_index, ]
+
+
+```
+Train GLM (Logistic Regression)
+```{r chunk12}
+glm_model <- glm(diabetes ~ ., data = train_data, family = "binomial",
+                 control = glm.control(maxit = 100))
+
+
+# Predict on test set
+glm_pred_prob <- predict(glm_model, newdata = test_data, type = "response")
+glm_pred <- ifelse(glm_pred_prob > 0.5, 1, 0)
+glm_pred <- as.factor(glm_pred)
+
+# Actual labels
+actual <- test_data$diabetes
+
+```
+The model did not find the optimal solution within the maximum number of iterations. It is speculated that the variables Blood Glucose Level and HbA1c Level have too strong an impact on the predicted variables (causing the coefficient to increase infinitely) and the data separation is serious.
+
+Evaluation for GLM
+```{r chunk13}
+# Confusion Matrix
+conf_glm <- confusionMatrix(glm_pred, actual, positive = "1")
+print(conf_glm)
+
+# F1 Score
+F1_Score <- function(pred, true, positive = "1") {
+  cm <- table(pred, true)
+  precision <- cm[positive, positive] / sum(cm[positive, ])
+  recall <- cm[positive, positive] / sum(cm[, positive])
+  f1 <- 2 * precision * recall / (precision + recall)
+  return(f1)
+}
+
+f1_glm <- F1_Score(glm_pred, actual)
+cat("F1 Score (GLM):", f1_glm, "\n")
+
+```
+The model’s overall prediction accuracy is 0.959, which is very high.
+However, the recall for diabetic patients is relatively low at 0.6282.
+Considering that the proportion of diabetic patients in the dataset is low,
+and that Blood Glucose Level and HbA1c Level have an excessively strong influence,
+this suggests that the model performs poorly in distinguishing between diabetic and non-diabetic individuals in certain ranges,
+
+
+Lasso Logistic Regression + Visualization
+```{r chunk14}
+# Prepare matrices for glmnet
+x_train <- model.matrix(diabetes ~ ., train_data)[, -1]
+x_test  <- model.matrix(diabetes ~ ., test_data)[, -1]
+y_train <- train_data$diabetes
+y_test  <- test_data$diabetes
+
+# Lasso logistic regression (alpha = 1 for L1)
+set.seed(42)
+lasso_model <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1, type.measure = "class")
+
+# Best lambda
+best_lambda <- lasso_model$lambda.min
+cat("Best Lambda:", best_lambda, "\n")
+
+# Predict on test data
+lasso_pred_prob <- predict(lasso_model, newx = x_test, s = "lambda.min", type = "response")
+lasso_pred <- ifelse(lasso_pred_prob > 0.5, 1, 0)
+lasso_pred <- as.factor(lasso_pred)
+
+# Confusion Matrix
+conf_lasso <- confusionMatrix(lasso_pred, y_test, positive = "1")
+print(conf_lasso)
+
+# F1 Score
+f1_lasso <- F1_Score(lasso_pred, y_test)
+cat("F1 Score (Lasso):", f1_lasso, "\n")
+
+```
+
+
+Lasso is not significantly better than logistic regression (GLM). Although it does have some details, its overall performance is still limited by the structure of the data and the class imbalance problem.
+
+
+
+```{r chunk15}
+# Plot Lasso coefficient paths
+plot(lasso_model$glmnet.fit, xvar = "lambda", label = TRUE)
+title("Lasso Coefficients vs Log(Lambda)")
+
+```
+```{r chunk16}
+roc_obj <- roc(as.numeric(y_test), as.numeric(lasso_pred_prob))
+auc(roc_obj)
+plot(roc_obj, main = "ROC Curve for Lasso")
+```
+
+```{r chunk17}
+library(xgboost)
+
+library(caret)
+library(pROC)
+
+```
+```{r chunk18}
+# Remove target column for X and convert to matrix
+train_data$smoking_status_grouped <- NULL
+test_data$smoking_status_grouped <- NULL
+x_train <- train_data[, setdiff(names(train_data), "diabetes")]
+x_train[] <- lapply(x_train, function(col) as.numeric(as.character(col)))
+x_train <- as.matrix(x_train)
+
+x_test <- test_data[, setdiff(names(test_data), "diabetes")]
+x_test[] <- lapply(x_test, function(col) as.numeric(as.character(col)))
+x_test <- as.matrix(x_test)
+
+# convert label
+y_train <- ifelse(train_data$diabetes == "1", 1, 0)
+y_test <- ifelse(test_data$diabetes == "1", 1, 0)
+
+
+```
+
+```{r chunk18.1}
+x_train_raw <- train_data[, setdiff(names(train_data), "diabetes")]
+sapply(x_train_raw, function(col) sum(is.na(as.numeric(as.character(col)))))
+sapply(train_data, class)
+
+```
+
+```{r chunk19}
+# Define XGBoost parameters (binary:logistic for classification)
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  max_depth = 6,
+  eta = 0.1
+)
+
+# Convert to DMatrix
+dtrain <- xgb.DMatrix(data = x_train, label = y_train)
+dtest  <- xgb.DMatrix(data = x_test)
+
+# Train model
+set.seed(42)
+xgb_model <- xgb.train(params = params, data = dtrain, nrounds = 100, verbose = 0)
+```
+
+
+```{r chunk20}
+# Predict probabilities
+
+xgb_pred_prob <- predict(xgb_model, dtest)
+
+# Predict labels (using 0.5 threshold)
+xgb_pred <- ifelse(xgb_pred_prob > 0.5, 1, 0)
+xgb_pred <- as.factor(xgb_pred)
+actual <- as.factor(y_test)
+```
+
+
+
+
+
+```{r chunk21}
+# Confusion matrix
+conf_xgb <- confusionMatrix(xgb_pred, actual, positive = "1")
+print(conf_xgb)
+
+# F1 Score
+F1_Score <- function(pred, true, positive = "1") {
+  cm <- table(pred, true)
+  if (!positive %in% rownames(cm) || !positive %in% colnames(cm)) return(NA)
+  precision <- cm[positive, positive] / sum(cm[positive, ])
+  recall <- cm[positive, positive] / sum(cm[, positive])
+  if (is.na(precision) || is.na(recall) || (precision + recall) == 0) return(0)
+  f1 <- 2 * precision * recall / (precision + recall)
+  return(f1)
+}
+
+f1_xgb <- F1_Score(xgb_pred, actual)
+cat("F1 Score (XGBoost):", f1_xgb, "\n")
+
+```
+
+
+
+```{r chunk22}
+roc_obj <- roc(y_test, xgb_pred_prob)
+auc_val <- auc(roc_obj)
+plot(roc_obj, main = paste("ROC Curve for XGBoost (AUC =", round(auc_val, 4), ")"))
+
+```
+
+
+XGBoost model performance is significantly better than the previous generalized linear model (GLM)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
