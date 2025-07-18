@@ -133,36 +133,39 @@ This data set does not have missing values, so there is no need to fill missing 
 
 
 ```{r chunk2.2}
+diabetes_dataset_factor <- diabetes_dataset
 # convert gender to factor
-diabetes_dataset$gender <- factor(diabetes_dataset$gender)
+diabetes_dataset_factor$gender <- factor(diabetes_dataset_factor$gender)
 
 # dummy variables
-gender_dummies <- model.matrix(~ gender - 1, data = diabetes_dataset)
+gender_dummies <- model.matrix(~ gender - 1, data = diabetes_dataset_factor)
+
 
 # add it back
-diabetes_dataset <- cbind(diabetes_dataset, gender_dummies)
-head(diabetes_dataset, 5)
+diabetes_dataset_factor <- cbind(diabetes_dataset_factor, gender_dummies)
+
+head(diabetes_dataset_factor, 5)
 ```
 ```{r chunk2.3}
 library(dplyr)
 
 # Merge smoking_history categories into more logical groups
-diabetes_dataset$smoking_status_grouped <- dplyr::case_when(
-  diabetes_dataset$smoking_history == "never" ~ "never",
-  diabetes_dataset$smoking_history == "current" ~ "current",
-  diabetes_dataset$smoking_history %in% c("former", "not current", "ever") ~ "former",
+diabetes_dataset_factor$smoking_status_grouped <- dplyr::case_when(
+  diabetes_dataset_factor$smoking_history == "never" ~ "never",
+  diabetes_dataset_factor$smoking_history == "current" ~ "current",
+  diabetes_dataset_factor$smoking_history %in% c("former", "not current", "ever") ~ "former",
   TRUE ~ "unknown"
 )
 
 # convert gender to factor
-diabetes_dataset$smoking_status_grouped <- factor(diabetes_dataset$smoking_status_grouped)
+diabetes_dataset_factor$smoking_status_grouped <- factor(diabetes_dataset_factor$smoking_status_grouped)
 
 # one-hot encoding
-smoking_dummies <- model.matrix(~ smoking_status_grouped - 1, data = diabetes_dataset)
+smoking_dummies <- model.matrix(~ smoking_status_grouped - 1, data = diabetes_dataset_factor)
 
 # add it back
-diabetes_dataset <- cbind(diabetes_dataset, smoking_dummies)
-head(diabetes_dataset, 5)
+diabetes_dataset_factor <- cbind(diabetes_dataset_factor, smoking_dummies)
+head(diabetes_dataset_factor, 5)
 ```
 
 
@@ -344,7 +347,7 @@ library(pROC)
 
 
 # Remove original gender and smoking_history columns
-cleaned_data <- diabetes_dataset %>%
+cleaned_data <- diabetes_dataset_factor %>%
   select(-gender, -smoking_history)
 
 # Ensure target is a factor
@@ -433,6 +436,44 @@ f1_lasso <- F1_Score(lasso_pred, y_test)
 cat("F1 Score (Lasso):", f1_lasso, "\n")
 
 ```
+```{r chunk15.0}
+# Extract the coefficients at the optimal lambda
+lasso_coefs <- coef(lasso_model, s = "lambda.min")
+
+# View non-zero coefficients (including intercept)
+nonzero_coef <- lasso_coefs[lasso_coefs[, 1] != 0, ]
+print(nonzero_coef)
+
+# 
+nonzero_feature_names <- rownames(lasso_coefs)[which(lasso_coefs[, 1] != 0)]
+nonzero_feature_names <- setdiff(nonzero_feature_names, "(Intercept)")
+
+cat("Features selected by Lasso:\n")
+print(nonzero_feature_names)
+```
+## Lasso model analysis conclusion:
+
+After using the Lasso logistic regression model for feature selection, I came to some inspiring findings, especially about the treatment of smoking history variables and the relative importance of other major risk factors:
+
+Treatment and impact of smoking history variables:
+
+After grouping the `smoking_history` variable and one-hot encoding it, the model only retains the coefficient of `smoking_status_groupedunknown` (that is, the part of "No Info" in the original data), and other dummy variables such as `"never"`, `"former"`, `"current"` are all compressed to zero by Lasso. This shows that:
+
+Smoking history does not provide effective discriminant information in this dataset;
+
+Instead, people with missing smoking information (No Info) show statistical significance;
+
+Therefore, when using linear models (such as Lasso or logistic regression), I think it is necessary to consider removing the smoking history variable to avoid introducing interference signals.
+
+Main risk factors (by Lasso model coefficient):
+
+Based on the retained non-zero coefficients, I draw the following conclusions:
+
+Age: The older you are, the higher your risk of diabetes, but its influence is less than the following physiological factors;
+Hypertension and Heart Disease: Significantly increase the risk of diabetes and are important comorbid factors;
+HbA1c level: Has the strongest impact on diabetes prediction, with each increase of 1 unit, the risk increases significantly, and is the most critical biomarker;
+BMI and Blood Glucose: Both are positive factors, the higher the BMI and blood sugar levels, the greater the risk of diabetes;
+Gender: Males are slightly higher than females, but the impact is very limited.
 
 
 Lasso is not significantly better than logistic regression (GLM). Although it does have some details, its overall performance is still limited by the structure of the data and the class imbalance problem.
@@ -554,9 +595,157 @@ XGBoost model performance is significantly better than the previous generalized 
 
 
 
+```{r chunk23}
+library(randomForest)
+library(caret)
+library(MLmetrics)
+set.seed(42)
+
+# preparation
+train_index <- createDataPartition(diabetes_dataset$diabetes, p = 0.7, list = FALSE)
+train_data <- diabetes_dataset[train_index, ]
+test_data  <- diabetes_dataset[-train_index, ]
+
+train_data$diabetes <- as.factor(train_data$diabetes)
+test_data$diabetes  <- as.factor(test_data$diabetes)
+
+# --------------------------
+# A. All variables model（Baseline）
+# --------------------------
+rf_all <- randomForest(diabetes ~ ., data = train_data, ntree = 1000, maxnodes = 2^4, importance = TRUE)
+pred_all <- predict(rf_all, test_data)
+confusion_all <- confusionMatrix(pred_all, test_data$diabetes, positive = "1")
+f1_all <- F1_Score(pred_all, test_data$diabetes, positive = "1")
+
+# --------------------------
+# B. Univariate Model（HbA1c only）
+# --------------------------
+rf_hba1c <- randomForest(diabetes ~ HbA1c_level, data = train_data, ntree = 1000, maxnodes = 2^4)
+pred_hba1c <- predict(rf_hba1c, test_data)
+confusion_hba1c <- confusionMatrix(pred_hba1c, test_data$diabetes, positive = "1")
+f1_hba1c <- F1_Score(pred_hba1c, test_data$diabetes, positive = "1")
+
+# --------------------------
+# C. Multiple strong predictors
+# --------------------------
+rf_strong <- randomForest(diabetes ~ HbA1c_level + hypertension + heart_disease,
+                          data = train_data, ntree = 1000, maxnodes = 2^4)
+pred_strong <- predict(rf_strong, test_data)
+confusion_strong <- confusionMatrix(pred_strong, test_data$diabetes, positive = "1")
+f1_strong <- F1_Score(pred_strong, test_data$diabetes, positive = "1")
+
+
+# --------------------------
+# Output
+# --------------------------
+cat("F1 Score - All variables:", f1_all, "\n")
+cat("F1 Score - HbA1c only   :", f1_hba1c, "\n")
+cat("F1 Score - Strong set   :", f1_strong, "\n")
+
+# 可选：变量重要性图
+varImpPlot(rf_all, main = "All Variables Importance")
+varImpPlot(rf_strong, main = "Strong Predictors Importance")
+```
+
+The model with all variables performed best. The model with only HbA1c_level had an F1 ≈ 0.622, which is a baseline and has some effect, but is much lower than the complete model. Even with hypertension and heart_disease added, the F1 was still 0.622.
+```{r chunk24.01}
+confusion_all
+```
+
+```{r chunk24}
+cor(train_data$HbA1c_level, train_data$blood_glucose_level, use = "complete.obs")
+cor(train_data$HbA1c_level, train_data$hypertension, use = "complete.obs")
+cor(train_data$HbA1c_level, train_data$heart_disease, use = "complete.obs")
+```
+There is no obvious collinearity between HbA1c_level, hypertension and heart_disease
+
+```{r chunk25}
+# Frequency table
+table(train_data$hypertension)
+table(train_data$heart_disease)
+
+# Percentage Distribution
+prop.table(table(train_data$hypertension))
+prop.table(table(train_data$heart_disease))
+
+# the distribution in different diabetes categories
+table(train_data$hypertension, train_data$diabetes)
+prop.table(table(train_data$hypertension, train_data$diabetes), margin = 2)
+```
+The distribution of variables is extremely uneven
+```{r chunk26}
+library(ranger)
+```
 
 
 
+
+
+
+
+
+
+
+```{r chunk26}
+library(ranger)
+library(caret)
+
+train_data$diabetes <- as.factor(train_data$diabetes)
+test_data$diabetes  <- as.factor(test_data$diabetes)
+
+# set class weights
+class_weights <- c("0" = 1, "1" = 3)  # can adjust it to 1:5 to see the impact
+
+
+# Training a weighted random forest model
+rf_weighted <- ranger(
+  formula = diabetes ~ .,
+  data = train_data,
+  num.trees = 1000,
+  max.depth = 4,
+  classification = TRUE,
+  probability = FALSE,
+  class.weights = class_weights,
+  importance = "impurity"
+)
+
+pred_weighted <- predict(rf_weighted, data = test_data)$predictions
+confusion <- confusionMatrix(pred_weighted, test_data$diabetes, positive = "1")
+print(confusion)
+
+# Output variable importance
+importance_vals <- ranger::importance(rf_weighted)
+print(importance_vals)
+
+# F1 score
+f1 <- F1_Score(pred_weighted, test_data$diabetes, positive = "1")
+cat("F1 Score:", f1, "\n")
+```
+
+The results remain unchanged after weighting
+
+
+
+
+
+```{r Dataset after selecting variables}
+# Step 1: Remove 'smoking_history' to create a new dataset
+diabetes_dataset_without <- diabetes_dataset
+diabetes_dataset_without$smoking_history <- NULL
+
+# Step 2: Create a new dataset with gender as factor and one-hot encoded
+diabetes_dataset_without_factor <- diabetes_dataset_without
+
+# Convert gender to factor
+diabetes_dataset_without_factor$gender <- factor(diabetes_dataset_without_factor$gender)
+
+# Create dummy variables for gender (one-hot encoding)
+gender_dummies <- model.matrix(~ gender - 1, data = diabetes_dataset_without_factor)
+
+# Combine dummy variables back to the dataset
+diabetes_dataset_without_factor <- cbind(diabetes_dataset_without_factor, gender_dummies)
+
+```
 
 
 
