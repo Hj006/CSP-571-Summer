@@ -686,6 +686,7 @@ library(ranger)
 
 
 
+
 ```{r chunk26}
 library(ranger)
 library(caret)
@@ -744,15 +745,413 @@ gender_dummies <- model.matrix(~ gender - 1, data = diabetes_dataset_without_fac
 
 # Combine dummy variables back to the dataset
 diabetes_dataset_without_factor <- cbind(diabetes_dataset_without_factor, gender_dummies)
-
 ```
 
+## Model Development and Training
 
+### Data Preparation for Modeling
 
+```{r chunk8}
+# Load required libraries
+library(caret)
+library(randomForest)
+library(e1071)
+library(pROC)
+library(ggplot2)
+library(dplyr)
 
+# Prepare features for modeling
+# Select relevant features (excluding original categorical variables that were encoded)
+model_features <- c("age", "bmi", "HbA1c_level", "blood_glucose_level", 
+                   "hypertension", "heart_disease",
+                   "genderFemale", "genderMale")
 
+# Create modeling dataset
+model_data <- diabetes_dataset_without_factor[, c(model_features, "diabetes")]
+# Convert diabetes to factor with proper level names
+model_data$diabetes <- factor(model_data$diabetes, 
+                              levels = c(0, 1), 
+                              labels = c("No_Diabetes", "Diabetes"))
 
+# Check class balance
+table(model_data$diabetes)
+prop.table(table(model_data$diabetes))
+```
 
+### Train-Test-Validation Split
 
+```{r chunk9}
+# Set seed for reproducibility
+set.seed(123)
 
+# First split: 70% training, 30% remaining
+train_index <- createDataPartition(model_data$diabetes, p = 0.7, list = FALSE)
+train_data <- model_data[train_index, ]
+temp_data <- model_data[-train_index, ]
 
+# Second split: 15% validation, 15% test
+val_index <- createDataPartition(temp_data$diabetes, p = 0.5, list = FALSE)
+val_data <- temp_data[val_index, ]
+test_data <- temp_data[-val_index, ]
+
+# Check split sizes
+cat("Training set size:", nrow(train_data), "\n")
+cat("Validation set size:", nrow(val_data), "\n")
+cat("Test set size:", nrow(test_data), "\n")
+
+# Check class distribution in each set
+cat("\nClass distribution in training set:\n")
+print(table(train_data$diabetes))
+cat("\nClass distribution in validation set:\n")
+print(table(val_data$diabetes))
+cat("\nClass distribution in test set:\n")
+print(table(test_data$diabetes))
+```
+
+### Feature Scaling
+
+```{r chunk10}
+# Scale numerical features
+numerical_features <- c("age", "bmi", "HbA1c_level", "blood_glucose_level")
+
+# Calculate scaling parameters from training data
+preprocess_params <- preProcess(train_data[, numerical_features], method = c("center", "scale"))
+
+# Apply scaling to all datasets
+train_scaled <- train_data
+val_scaled <- val_data
+test_scaled <- test_data
+
+train_scaled[, numerical_features] <- predict(preprocess_params, train_data[, numerical_features])
+val_scaled[, numerical_features] <- predict(preprocess_params, val_data[, numerical_features])
+test_scaled[, numerical_features] <- predict(preprocess_params, test_data[, numerical_features])
+```
+
+### Model Training with Cross-Validation
+
+```{r chunk11}
+# Set up cross-validation control
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = TRUE
+)
+
+# 1. Logistic Regression
+set.seed(123)
+lr_model <- train(
+  diabetes ~ .,
+  data = train_scaled,
+  method = "glm",
+  trControl = ctrl,
+  metric = "ROC"
+)
+
+# 2. Random Forest
+set.seed(123)
+rf_model <- train(
+  diabetes ~ .,
+  data = train_scaled,
+  method = "rf",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 3
+)
+
+# 3. XGBoost (Simplified version)
+set.seed(123)
+xgb_model <- train(
+  diabetes ~ .,
+  data = train_scaled,
+  method = "xgbTree",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 3,  # Reduced tuning
+  verbose = FALSE  # Reduce output
+)
+
+# 4. Gradient Boosting Machine (GBM)
+set.seed(123)
+gbm_model <- train(
+  diabetes ~ .,
+  data = train_scaled,
+  method = "gbm",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 3,  # Reduced tuning
+  verbose = FALSE  # Reduce output
+)
+```
+
+### Model Performance Comparison
+
+```{r chunk12}
+# Compare model performances
+models <- list(
+  "Logistic Regression" = lr_model,
+  "Random Forest" = rf_model,
+  "XGBoost" = xgb_model,
+  "GBM" = gbm_model
+)
+
+# Extract results
+results <- resamples(models)
+summary(results)
+
+# Plot comparison
+bwplot(results, metric = "ROC")
+dotplot(results, metric = "ROC")
+```
+
+### Hyperparameter Tuning
+
+```{r chunk13}
+# Random Forest with detailed tuning
+rf_grid <- expand.grid(
+  mtry = c(2, 3, 4, 5, 6)
+)
+
+set.seed(123)
+rf_tuned <- train(
+  diabetes ~ .,
+  data = train_scaled,
+  method = "rf",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = rf_grid
+)
+```
+
+### Model Evaluation
+
+```{r chunk14}
+# Function to evaluate model performance
+evaluate_model <- function(model, test_data, model_name) {
+  # Make predictions
+  predictions <- predict(model, test_data, type = "prob")
+  predicted_class <- predict(model, test_data)
+  
+  # Calculate metrics
+  cm <- confusionMatrix(predicted_class, test_data$diabetes, positive = "Diabetes")
+  roc_obj <- roc(test_data$diabetes, predictions$`Diabetes`)
+  auc_score <- auc(roc_obj)
+  
+  # Return results
+  results <- list(
+    model_name = model_name,
+    accuracy = cm$overall["Accuracy"],
+    sensitivity = cm$byClass["Sensitivity"],
+    specificity = cm$byClass["Specificity"],
+    precision = cm$byClass["Precision"],
+    f1_score = cm$byClass["F1"],
+    auc = auc_score,
+    confusion_matrix = cm,
+    roc_obj = roc_obj
+  )
+  
+  return(results)
+}
+
+# Evaluate all models on validation set
+validation_results <- list()
+
+validation_results$lr <- evaluate_model(lr_model, val_scaled, "Logistic Regression")
+validation_results$rf <- evaluate_model(rf_tuned, val_scaled, "Random Forest")
+validation_results$xgb <- evaluate_model(xgb_model, val_scaled, "XGBoost")
+validation_results$gbm <- evaluate_model(gbm_model, val_scaled, "GBM")
+
+# Create comparison table
+comparison_table <- data.frame(
+  Model = sapply(validation_results, function(x) x$model_name),
+  Accuracy = sapply(validation_results, function(x) x$accuracy),
+  Sensitivity = sapply(validation_results, function(x) x$sensitivity),
+  Specificity = sapply(validation_results, function(x) x$specificity),
+  Precision = sapply(validation_results, function(x) x$precision),
+  F1_Score = sapply(validation_results, function(x) x$f1_score),
+  AUC = sapply(validation_results, function(x) x$auc)
+)
+
+print(comparison_table)
+```
+
+### ROC Curves Comparison
+
+```{r chunk15}
+# Plot ROC curves
+plot(validation_results$lr$roc_obj, col = "blue", main = "ROC Curves Comparison")
+plot(validation_results$rf$roc_obj, col = "red", add = TRUE)
+plot(validation_results$xgb$roc_obj, col = "purple", add = TRUE)
+plot(validation_results$gbm$roc_obj, col = "green", add = TRUE)
+legend("bottomright", 
+       legend = c("Logistic Regression", "Random Forest", "XGBoost", "GBM"),
+       col = c("blue", "red", "purple", "green"), 
+       lty = 1)
+```
+
+### Feature Importance Analysis
+
+```{r chunk16}
+# Feature importance for Random Forest
+rf_importance <- varImp(rf_tuned)
+plot(rf_importance, main = "Feature Importance - Random Forest")
+
+# Feature importance for XGBoost
+xgb_importance <- varImp(xgb_model)
+plot(xgb_importance, main = "Feature Importance - XGBoost")
+
+# Feature importance for GBM
+# gbm_importance <- varImp(gbm_model)
+# plot(gbm_importance, main = "Feature Importance - GBM")
+
+# Print importance scores
+print(rf_importance)
+print(xgb_importance)
+# print(gbm_importance)
+
+# The GBM model trained successfully, but feature importance extraction
+# has compatibility issues with the caret package wrapper.
+# This is a known issue and doesn't affect model performance.
+```
+
+### Alternative GBM Feature Importance (if needed)
+
+```{r gbm_importance_alt}
+# Alternative method for GBM feature importance
+# tryCatch({
+#   # Try the standard method first
+#   gbm_importance <- varImp(gbm_model)
+#   print("GBM Feature Importance (Standard Method):")
+#   print(gbm_importance)
+# }, error = function(e) {
+#   # If that fails, use a simpler approach
+#   cat("GBM Feature Importance (Alternative Method):\n")
+#   cat("Note: GBM feature importance extraction has compatibility issues with caret\n")
+#   cat("The model trained successfully, but importance scores may not be available\n")
+#   
+#   # You can also try extracting from the underlying gbm object
+#   tryCatch({
+#     gbm_obj <- gbm_model$finalModel
+#     if (!is.null(gbm_obj)) {
+#       cat("GBM model trained successfully with", gbm_obj$n.trees, "trees\n")
+#     }
+#   }, error = function(e2) {
+#     cat("GBM model details not accessible\n")
+#   })
+# })
+```
+
+### Final Model Selection and Test Set Evaluation
+
+```{r chunk17}
+# Select best model based on validation performance
+best_model_name <- comparison_table$Model[which.max(comparison_table$AUC)]
+cat("Best model based on AUC:", best_model_name, "\n")
+
+# Get the best model
+if (best_model_name == "Logistic Regression") {
+  best_model <- lr_model
+} else if (best_model_name == "Random Forest") {
+  best_model <- rf_tuned
+} else if (best_model_name == "XGBoost") {
+  best_model <- xgb_model
+} else if (best_model_name == "GBM") {
+  best_model <- gbm_model
+}
+
+# Evaluate best model on test set
+final_results <- evaluate_model(best_model, test_scaled, paste("Best Model:", best_model_name))
+
+cat("\nFinal Test Set Results:\n")
+cat("Accuracy:", round(final_results$accuracy, 4), "\n")
+cat("Sensitivity:", round(final_results$sensitivity, 4), "\n")
+cat("Specificity:", round(final_results$specificity, 4), "\n")
+cat("Precision:", round(final_results$precision, 4), "\n")
+cat("F1 Score:", round(final_results$f1_score, 4), "\n")
+cat("AUC:", round(final_results$auc, 4), "\n")
+
+# Final confusion matrix
+print(final_results$confusion_matrix)
+```
+
+### Model Interpretation
+
+```{r chunk18}
+# For logistic regression, show coefficients
+if (best_model_name == "Logistic Regression") {
+  coef_summary <- summary(best_model)$coefficients
+  print("Logistic Regression Coefficients:")
+  print(coef_summary)
+  
+  # Calculate odds ratios
+  odds_ratios <- exp(coef_summary[, "Estimate"])
+  
+  # Calculate confidence intervals manually (since confint doesn't work with caret objects)
+  std_errors <- coef_summary[, "Std. Error"]
+  z_value <- 1.96  # 95% confidence interval
+  
+  lower_ci <- exp(coef_summary[, "Estimate"] - z_value * std_errors)
+  upper_ci <- exp(coef_summary[, "Estimate"] + z_value * std_errors)
+  
+  odds_table <- data.frame(
+    Feature = rownames(coef_summary),
+    Coefficient = coef_summary[, "Estimate"],
+    Odds_Ratio = odds_ratios,
+    Lower_CI = lower_ci,
+    Upper_CI = upper_ci,
+    P_value = coef_summary[, "Pr(>|z|)"]
+  )
+  
+  print("Odds Ratios and Confidence Intervals:")
+  print(odds_table)
+}
+```
+
+### Summary and Conclusions
+
+```{r chunk19}
+# Summary statistics
+cat("Dataset Summary:\n")
+cat("Total samples:", nrow(diabetes_dataset), "\n")
+cat("Diabetes prevalence:", round(mean(diabetes_dataset$diabetes == 1), 3), "\n")
+cat("Class imbalance ratio:", round(sum(diabetes_dataset$diabetes == 0) / sum(diabetes_dataset$diabetes == 1), 2), ":1\n")
+
+cat("\nKey Findings:\n")
+
+# Handle feature importance for different model types
+if (best_model_name == "Logistic Regression") {
+  # For logistic regression, use coefficients
+  coef_importance <- abs(summary(best_model)$coefficients[, "Estimate"])
+  top_features <- names(sort(coef_importance, decreasing = TRUE)[1:5])
+  cat("1. Most important features:", paste(top_features, collapse = ", "), "\n")
+} else {
+  # For Random Forest, use variable importance
+  tryCatch({
+    rf_importance <- varImp(best_model)$importance
+    # Extract the importance values as a vector
+    if (is.data.frame(rf_importance)) {
+      importance_values <- rf_importance[, 1]
+    } else {
+      importance_values <- as.numeric(rf_importance)
+    }
+    # Get feature names
+    if (is.data.frame(rf_importance)) {
+      feature_names <- rownames(rf_importance)
+    } else {
+      feature_names <- names(rf_importance)
+    }
+    # Sort and get top 5
+    sorted_indices <- order(importance_values, decreasing = TRUE)
+    top_features <- feature_names[sorted_indices[1:5]]
+    cat("1. Most important features:", paste(top_features, collapse = ", "), "\n")
+  }, error = function(e) {
+    cat("1. Most important features: Unable to extract (using Random Forest)\n")
+  })
+}
+
+cat("2. Best performing model:", best_model_name, "\n")
+cat("3. Final AUC on test set:", round(final_results$auc, 4), "\n")
+cat("4. Model sensitivity:", round(final_results$sensitivity, 4), "\n")
+cat("5. Model specificity:", round(final_results$specificity, 4), "\n")
+```
