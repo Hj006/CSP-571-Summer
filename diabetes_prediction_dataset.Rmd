@@ -827,6 +827,40 @@ val_scaled[, numerical_features] <- predict(preprocess_params, val_data[, numeri
 test_scaled[, numerical_features] <- predict(preprocess_params, test_data[, numerical_features])
 ```
 
+```{r chunk10.1 feature-distributions-combined-gridextra, fig.width=16, fig.height=8, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+
+# Create 'before scaling' plot
+train_before <- train_data %>%
+  select(age, bmi, HbA1c_level, blood_glucose_level, diabetes) %>%
+  pivot_longer(cols = -diabetes, names_to = "feature", values_to = "value")
+
+plot_before <- ggplot(train_before, aes(x = value, fill = diabetes)) +
+  geom_histogram(position = "identity", bins = 30, alpha = 0.6) +
+  facet_wrap(~ feature, scales = "free", ncol = 2) +
+  labs(title = "Before Scaling", x = "Original Value", y = "Count") +
+  theme_minimal()
+
+# Create 'after scaling' plot
+train_after <- train_scaled %>%
+  select(age, bmi, HbA1c_level, blood_glucose_level, diabetes) %>%
+  pivot_longer(cols = -diabetes, names_to = "feature", values_to = "value")
+
+plot_after <- ggplot(train_after, aes(x = value, fill = diabetes)) +
+  geom_histogram(position = "identity", bins = 30, alpha = 0.6) +
+  facet_wrap(~ feature, scales = "free", ncol = 2) +
+  labs(title = "After Scaling", x = "Scaled Value", y = "Count") +
+  theme_minimal()
+
+# Display both plots side-by-side
+grid.arrange(plot_before, plot_after, ncol = 2)
+```
+
+
 ### Model Training with Cross-Validation
 
 ```{r chunk11}
