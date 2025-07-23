@@ -1,10 +1,11 @@
 ---
-title: "Pima Indians Diabetes 数据分析与 GLM 模型训练"
+title: "Pima Indians Diabetes"
+output: 
+  pdf_document:
+    latex_engine: xelatex
 author: ""
 date: "`r Sys.Date()`"
-output: html_document
 ---
-
 
 ## 1. Data loading
 
@@ -19,12 +20,10 @@ data("PimaIndiansDiabetes")
 pima_data <- PimaIndiansDiabetes
 str(pima_data)
 ```
+
 ```{r chunk1.1}
 head(pima_data)
 ```
-
-
-
 
 
 
@@ -230,34 +229,7 @@ for (var in vars_to_plot) {
 ```
 
 
-```{r boxplot4}
-
-```
-
-```{r boxplot5}
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## 4. GLM Model Training
-
-
 
 ### 4.1 Train/Test Split
 
@@ -274,7 +246,6 @@ train_index <- createDataPartition(pima_data$diabetes, p = 0.7, list = FALSE)
 train_data <- pima_data[train_index, ]
 test_data <- pima_data[-train_index, ]
 ```
-
 
 
 ### 4.2 Train the Logistic Regression Model (GLM with Binomial Family)
